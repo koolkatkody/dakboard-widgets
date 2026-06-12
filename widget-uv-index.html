@@ -138,8 +138,15 @@ function fmtHourShort(decHr){
   h = h % 12; if(h === 0) h = 12;
   return h + ap;
 }
-/* parse Open-Meteo local ISO ("2026-06-08T14:00") -> Date */
-function parseLocal(s){ return new Date(s); }
+/* parse Open-Meteo local ISO ("2026-06-08T14:00") -> Date.
+   Built manually because older DakBoard browser engines (Fire tablet,
+   old Pi/WebView) return Invalid Date for this format. */
+function parseLocal(s){
+  if(s instanceof Date) return s;
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if(m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
+  return new Date(s);
+}
 function decHours(date){ return date.getHours() + date.getMinutes()/60; }
 
 async function load(){
@@ -152,15 +159,27 @@ async function load(){
     + '&current=us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide'
     + `&timezone=${encodeURIComponent(CONFIG.tz)}`;
 
-  const [uvRes, airRes] = await Promise.allSettled([
-    fetch(base).then(r=>r.json()),
-    fetch(air).then(r=>r.json())
-  ]);
-
-  if(uvRes.status !== 'fulfilled' || !uvRes.value.hourly){
-    throw new Error('UV fetch failed');
+  // UV is required. Fetch it on its own so a clear error surfaces.
+  var uvData;
+  try {
+    var uvResp = await fetch(base);
+    if(!uvResp.ok) throw new Error('HTTP ' + uvResp.status);
+    uvData = await uvResp.json();
+  } catch(e){
+    throw new Error('UV request failed: ' + (e && e.message ? e.message : e));
   }
-  render(uvRes.value, airRes.status === 'fulfilled' ? airRes.value : null);
+  if(!uvData || !uvData.hourly || !uvData.daily){
+    throw new Error('UV response malformed');
+  }
+
+  // AQI is optional — if its domain is blocked/slow, UV still renders.
+  var airData = null;
+  try {
+    var airResp = await fetch(air);
+    if(airResp.ok) airData = await airResp.json();
+  } catch(e){ airData = null; }
+
+  render(uvData, airData);
 }
 
 function render(uvData, airData){
@@ -311,9 +330,11 @@ function render(uvData, airData){
     </div>`;
 }
 
-function run(){ load().catch(e=>{
+function run(){ load().catch(function(e){
+  var msg = (e && e.message) ? e.message : String(e);
   document.getElementById('app').innerHTML =
-    '<div class="err">Couldn\'t load UV data.<br>Check the connection or the lat/lon in CONFIG.</div>';
+    '<div class="err">Couldn\'t load UV data.'
+    + '<br><span style="font-size:10px;opacity:.7">' + msg + '</span></div>';
   console.error(e);
 }); }
 
