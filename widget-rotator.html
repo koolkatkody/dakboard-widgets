@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Family Cards</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ROTATING FAMILY CARDS — Patio Score + Brewers
+     ES5 + XMLHttpRequest only (old Chromecast safe).
+     Edit CONFIG in the <script> block below.
+     ============================================================ */
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:100%; height:100%; }
+  body{
+    font-family:'Open Sans',sans-serif;
+    background:rgb(25,114,120);
+    color:rgb(192,230,222);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{ position:relative; width:100%; height:100%; }
+
+  .card{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:-webkit-flex; display:flex;
+    -webkit-flex-direction:column; flex-direction:column;
+    padding:14px 16px 26px;
+    opacity:0;
+    -webkit-transition:opacity .8s ease;
+    transition:opacity .8s ease;
+    pointer-events:none;
+  }
+  .card.on{ opacity:1; }
+
+  .head{ display:-webkit-flex; display:flex; -webkit-justify-content:space-between; justify-content:space-between; -webkit-align-items:baseline; align-items:baseline; margin-bottom:10px; }
+  .head .title{ font-family:'Bebas Neue',sans-serif; font-size:22px; letter-spacing:1.5px; line-height:1; }
+  .head .loc{ font-size:10px; letter-spacing:.5px; color:rgba(192,230,222,0.62); text-transform:uppercase; }
+
+  .hero{ display:-webkit-flex; display:flex; -webkit-align-items:flex-end; align-items:flex-end; margin-bottom:10px; }
+  .hero .val{ font-family:'Bebas Neue',sans-serif; font-size:64px; line-height:.8; letter-spacing:1px; }
+  .hero .meta{ padding-bottom:5px; padding-left:12px; min-width:0; }
+  .hero .cat{ font-family:'Bebas Neue',sans-serif; font-size:21px; letter-spacing:1px; line-height:1; }
+  .hero .sub{ font-size:10.5px; color:rgba(192,230,222,0.62); margin-top:3px; }
+
+  .stats{ display:-webkit-flex; display:flex; margin-top:auto; }
+  .stat{ -webkit-flex:1; flex:1; background:rgba(0,0,0,0.16); border-radius:7px; padding:7px 9px; min-width:0; }
+  .stat + .stat{ margin-left:8px; }
+  .stat .k{ font-size:9px; letter-spacing:.6px; text-transform:uppercase; color:rgba(192,230,222,0.62); white-space:nowrap; }
+  .stat .v{ font-family:'Bebas Neue',sans-serif; font-size:20px; line-height:1.05; letter-spacing:.5px; margin-top:2px; }
+  .stat .v small{ font-family:'Open Sans',sans-serif; font-size:10px; font-weight:600; letter-spacing:0; }
+
+  .bignote{ font-size:12px; line-height:1.45; color:rgba(192,230,222,0.85); margin-bottom:8px; }
+
+  /* score bar */
+  .bar{ height:7px; border-radius:4px; background:rgba(0,0,0,0.25); overflow:hidden; margin-bottom:10px; }
+  .bar i{ display:block; height:100%; border-radius:4px; }
+
+  /* brewers matchup */
+  .match{ display:-webkit-flex; display:flex; -webkit-align-items:center; align-items:center; margin-bottom:10px; }
+  .team{ -webkit-flex:1; flex:1; text-align:center; min-width:0; }
+  .team .lg{ height:34px; display:block; margin:0 auto 5px; }
+  .nglg{ height:46px; margin-right:12px; }
+  .team .nm{ font-family:'Bebas Neue',sans-serif; font-size:26px; letter-spacing:1px; line-height:1.05; }
+  .team .rec{ font-size:10px; color:rgba(192,230,222,0.62); margin-top:2px; }
+  .team .sc{ font-family:'Bebas Neue',sans-serif; font-size:52px; line-height:.9; }
+  .vs{ font-family:'Bebas Neue',sans-serif; font-size:15px; color:rgba(192,230,222,0.62); padding:0 10px; }
+
+  /* dots */
+  #dots{ position:absolute; bottom:9px; left:0; width:100%; text-align:center; }
+  #dots i{ display:inline-block; width:6px; height:6px; border-radius:50%;
+           background:rgba(192,230,222,0.30); margin:0 3px;
+           -webkit-transition:background .4s; transition:background .4s; }
+  #dots i.on{ background:rgb(192,230,222); }
+
+  .err{ margin:auto; text-align:center; font-size:12px; color:rgba(192,230,222,0.62); padding:16px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="card on" id="card-patio"><div class="err">Loading&hellip;</div></div>
+  <div class="card" id="card-brewers"><div class="err">Loading&hellip;</div></div>
+  <div id="dots"></div>
+</div>
+
+<script>
+/* ===========================================================
+   CONFIG
+   =========================================================== */
+var CONFIG = {
+  lat: 42.99,                 // Bay View / Milwaukee
+  lon: -87.90,
+  tz: 'America/Chicago',
+  label: 'Bay View',
+  teamId: 158,                // MLB team (158 = Brewers)
+  teamShort: 'Brewers',
+  rotateSeconds: 30,          // seconds per card
+  weatherRefreshMin: 30,
+  mlbRefreshMin: 10,          // faster so live scores stay fresh
+  eveStart: 17,               // patio window 5pm...
+  eveEnd: 21                  // ...9pm
+};
+
+/* ---------- ES5 helpers ---------- */
+function pad2(n){ n = String(n); return n.length < 2 ? '0' + n : n; }
+
+function fmtTime(d){
+  var h = d.getHours(), m = d.getMinutes();
+  var ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if(h === 0) h = 12;
+  return h + ':' + pad2(m) + ap;
+}
+
+/* "2026-07-01T18:00" local ISO -> Date (manual parse for old engines) */
+function parseLocal(s){
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if(m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
+  return new Date(s);
+}
+/* "2026-07-02T00:10:00Z" UTC ISO -> Date (manual parse for old engines) */
+function parseUTC(s){
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?/);
+  if(m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0));
+  return new Date(s);
+}
+function sameLocalDay(a, b){
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function dayName(d){
+  return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+}
+function isoDate(d){
+  return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate());
+}
+
+function esc(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function getJSON(url, ok, fail){
+  var xhr = new XMLHttpRequest();
+  var done = false;
+  function failOnce(e){ if(!done){ done = true; fail(e); } }
+  var watchdog = setTimeout(function(){
+    try { xhr.abort(); } catch(ig){}
+    failOnce(new Error('request timed out'));
+  }, 15000);
+  try {
+    xhr.open('GET', url, true);
+    xhr.onreadystatechange = function(){
+      if(xhr.readyState === 4 && !done){
+        clearTimeout(watchdog);
+        if(xhr.status >= 200 && xhr.status < 300){
+          done = true;
+          try { ok(JSON.parse(xhr.responseText)); }
+          catch(e){ fail(new Error('bad JSON: ' + (e.message || e))); }
+        } else if(xhr.status !== 0){
+          failOnce(new Error('HTTP ' + xhr.status));
+        }
+      }
+    };
+    xhr.onerror = function(){ clearTimeout(watchdog); failOnce(new Error('network error')); };
+    xhr.send();
+  } catch(e){ clearTimeout(watchdog); failOnce(new Error('request blocked: ' + (e.message || e))); }
+}
+
+function cardErr(id, what, e){
+  var msg = (e && e.message) ? e.message : String(e);
+  document.getElementById(id).innerHTML =
+    '<div class="err">Couldn\'t load ' + what + '.'
+    + '<br><span style="font-size:10px;opacity:.7">' + esc(msg) + '</span></div>';
+  if(window.console && console.error) console.error(what, e);
+}
+
+/* ===========================================================
+   CARD 1 — PATIO SCORE
+   Scores this evening (5–9pm) 0–10 from temp / rain / wind.
+   After 9pm it scores tomorrow evening instead.
+   =========================================================== */
+function scoreColor(s){
+  if(s >= 8) return '#5ec23f';
+  if(s >= 6) return '#a9c93f';
+  if(s >= 4) return '#f5d000';
+  if(s >= 2) return '#f18b00';
+  return '#e8442b';
+}
+function scoreVerdict(s){
+  if(s >= 9) return 'Perfect patio night';
+  if(s >= 7.5) return 'Great night for the patio';
+  if(s >= 6) return 'Pretty nice out';
+  if(s >= 4.5) return 'Might be iffy';
+  if(s >= 3) return 'Probably a pass';
+  return 'Not tonight';
+}
+/* piecewise comfort curves, each returns 0..1 */
+function tempFactor(t){          // ideal 68–82°F
+  if(t == null) return 0.5;
+  if(t >= 68 && t <= 82) return 1;
+  if(t < 68) return Math.max(0, 1 - (68 - t) / 20);   // 48°F -> 0
+  return Math.max(0, 1 - (t - 82) / 16);              // 98°F -> 0
+}
+function rainFactor(p){          // precip probability %
+  if(p == null) return 0.8;
+  return Math.max(0, 1 - (p / 70));                   // 70%+ -> 0
+}
+function windFactor(w){          // mph
+  if(w == null) return 0.9;
+  if(w <= 8) return 1;
+  return Math.max(0, 1 - (w - 8) / 17);               // 25mph -> 0
+}
+
+/* cheeky "why" line — the numbers already live in the stat tiles below */
+function patioReason(f, r, w){
+  var tf = tempFactor(f), rf = rainFactor(r), wf = windFactor(w);
+  var issues = [];
+  if(tf < 0.8) issues.push([tf, f > 82 ? 'hot' : 'cold']);
+  if(r != null && rf < 0.8) issues.push([rf, 'rain']);
+  if(w != null && wf < 0.8) issues.push([wf, 'wind']);
+
+  if(!issues.length){
+    if(tf >= 0.95 && rf >= 0.85 && wf >= 0.9) return 'chef\'s kiss out there';
+    return 'grab a chair';
+  }
+  issues.sort(function(a, b){ return a[0] - b[0]; });   // worst offender first
+
+  /* combo lines */
+  if(issues.length >= 2){
+    var pair = issues[0][1] + '+' + issues[1][1];
+    if(pair === 'rain+wind' || pair === 'wind+rain') return 'sideways rain. hard pass';
+    if(pair === 'hot+wind'  || pair === 'wind+hot')  return 'like sitting in a hair dryer';
+    if(pair === 'cold+wind' || pair === 'wind+cold') return 'windchill says no';
+    if(pair === 'rain+cold' || pair === 'cold+rain') return 'cold AND wet? nope';
+    if(pair === 'rain+hot'  || pair === 'hot+rain')  return 'muggy with a side of rain';
+  }
+  /* single offenders, worse = spicier */
+  var worst = issues[0][1], sev = issues[0][0];
+  if(worst === 'hot')  return sev < 0.4  ? 'too freakin\' hot' : 'a little toasty';
+  if(worst === 'cold') return sev < 0.25 ? 'parka territory' : 'sweater weather at best';
+  if(worst === 'rain') return sev < 0.15 ? 'the sky has other plans' : 'rain might crash the party';
+  return sev < 0.3 ? 'hold onto your napkins' : 'a bit breezy';
+}
+
+function loadPatio(){
+  var url = 'https://api.open-meteo.com/v1/forecast'
+    + '?latitude=' + CONFIG.lat + '&longitude=' + CONFIG.lon
+    + '&hourly=temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m'
+    + '&temperature_unit=fahrenheit&wind_speed_unit=mph'
+    + '&timezone=' + encodeURIComponent(CONFIG.tz) + '&forecast_days=2';
+  getJSON(url, function(data){
+    try { renderPatio(data); } catch(e){ cardErr('card-patio', 'patio forecast', e); }
+  }, function(e){ cardErr('card-patio', 'patio forecast', e); });
+}
+
+function renderPatio(data){
+  if(!data || !data.hourly || !data.hourly.time) throw new Error('malformed response');
+  var h = data.hourly, i;
+  var now = new Date();
+  /* if the evening is basically over, evaluate tomorrow */
+  var target = new Date(now.getTime());
+  var tomorrow = false;
+  if(now.getHours() >= CONFIG.eveEnd){ target = new Date(now.getTime() + 86400000); tomorrow = true; }
+
+  var temps = [], rains = [], winds = [], feels = [];
+  for(i = 0; i < h.time.length; i++){
+    var d = parseLocal(h.time[i]);
+    if(sameLocalDay(d, target) && d.getHours() >= CONFIG.eveStart && d.getHours() <= CONFIG.eveEnd){
+      if(h.temperature_2m && h.temperature_2m[i] != null) temps.push(h.temperature_2m[i]);
+      if(h.apparent_temperature && h.apparent_temperature[i] != null) feels.push(h.apparent_temperature[i]);
+      if(h.precipitation_probability && h.precipitation_probability[i] != null) rains.push(h.precipitation_probability[i]);
+      if(h.wind_speed_10m && h.wind_speed_10m[i] != null) winds.push(h.wind_speed_10m[i]);
+    }
+  }
+  if(!temps.length) throw new Error('no evening hours in response');
+
+  function avg(a){ var s = 0, j; for(j = 0; j < a.length; j++) s += a[j]; return s / a.length; }
+  function mx(a){ var m = -Infinity, j; for(j = 0; j < a.length; j++) if(a[j] > m) m = a[j]; return m; }
+
+  var t = avg(temps);
+  var f = feels.length ? avg(feels) : t;
+  var r = rains.length ? mx(rains) : null;   // worst-case rain chance
+  var w = winds.length ? avg(winds) : null;
+
+  var score = 10 * tempFactor(f) * rainFactor(r) * windFactor(w);
+  score = Math.round(score * 10) / 10;
+  var col = scoreColor(score);
+
+  document.getElementById('card-patio').innerHTML =
+      '<div class="head">'
+    +   '<div class="title">PATIO ' + (tomorrow ? 'TOMORROW' : 'TONIGHT') + '</div>'
+    +   '<div class="loc">' + CONFIG.label + ' &middot; 5&ndash;9pm</div>'
+    + '</div>'
+    + '<div class="hero">'
+    +   '<div class="val" style="color:' + col + '">' + (score % 1 === 0 ? score : score.toFixed(1)) + '</div>'
+    +   '<div class="meta">'
+    +     '<div class="cat" style="color:' + col + '">' + scoreVerdict(score) + '</div>'
+    +     '<div class="sub">' + patioReason(f, r, w) + '</div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="bar"><i style="width:' + Math.round(score * 10) + '%;background:' + col + '"></i></div>'
+    + '<div class="stats">'
+    +   '<div class="stat"><div class="k">Feels like</div><div class="v">' + Math.round(f) + '&deg;</div></div>'
+    +   '<div class="stat"><div class="k">Rain chance</div><div class="v">' + (r == null ? '&mdash;' : Math.round(r) + '<small>%</small>') + '</div></div>'
+    +   '<div class="stat"><div class="k">Wind</div><div class="v">' + (w == null ? '&mdash;' : Math.round(w) + ' <small>mph</small>') + '</div></div>'
+    + '</div>';
+}
+
+/* ===========================================================
+   CARD 2 — BREWERS
+   Live score > today's final > next scheduled game.
+   MLB statsapi (free, keyless).
+   =========================================================== */
+function loadBrewers(){
+  var now = new Date();
+  var start = new Date(now.getTime() - 86400000);       // yesterday (late games)
+  var end = new Date(now.getTime() + 86400000 * 8);     // next 8 days
+  var url = 'https://statsapi.mlb.com/api/v1/schedule'
+    + '?sportId=1&teamId=' + CONFIG.teamId
+    + '&startDate=' + isoDate(start) + '&endDate=' + isoDate(end)
+    + '&hydrate=linescore';
+  getJSON(url, function(data){
+    try { renderBrewers(data); } catch(e){ cardErr('card-brewers', 'Brewers schedule', e); }
+  }, function(e){ cardErr('card-brewers', 'Brewers schedule', e); });
+}
+
+function renderBrewers(data){
+  if(!data || !data.dates) throw new Error('malformed response');
+  var games = [], i, j;
+  for(i = 0; i < data.dates.length; i++){
+    var dg = data.dates[i].games || [];
+    for(j = 0; j < dg.length; j++) games.push(dg[j]);
+  }
+  if(!games.length){
+    document.getElementById('card-brewers').innerHTML =
+      '<div class="head"><div class="title">' + CONFIG.teamShort.toUpperCase() + '</div></div>'
+      + '<div class="err">No games in the next week.</div>';
+    return;
+  }
+
+  var now = new Date();
+  var live = null, next = null, lastFinal = null;
+  for(i = 0; i < games.length; i++){
+    var g = games[i];
+    if(!g.teams || !g.teams.home || !g.teams.away || !g.teams.home.team || !g.teams.away.team) continue;
+    var st = g.status ? g.status.abstractGameState : '';
+    var gd = parseUTC(g.gameDate);
+    /* allow rain-delayed games: Preview with a start time up to 4h in the past */
+    if(st === 'Live' && !live) live = g;
+    else if(st === 'Preview' && !next && gd.getTime() > now.getTime() - 4*3600000) next = g;
+    else if(st === 'Final' && sameLocalDay(gd, now)) lastFinal = g;
+  }
+  var g2 = live || lastFinal || next;
+  if(!g2){
+    /* schedule gap (e.g. All-Star break): show most recent valid game, labeled with its day */
+    for(i = games.length - 1; i >= 0; i--){
+      if(games[i].teams && games[i].teams.home && games[i].teams.away){ g2 = games[i]; break; }
+    }
+  }
+  if(!g2) throw new Error('no usable games in response');
+
+  var home = g2.teams.home, away = g2.teams.away;
+  var isHome = home.team.id === CONFIG.teamId;
+  var us = isHome ? home : away, them = isHome ? away : home;
+  var rec = us.leagueRecord ? (us.leagueRecord.wins + '-' + us.leagueRecord.losses) : '';
+  var themName = esc(shortName(them.team.name || ''));
+  var gameTime = parseUTC(g2.gameDate);
+  var st2 = g2.status ? g2.status.abstractGameState : '';
+  var venueName = (g2.venue && g2.venue.name) ? esc(g2.venue.name) : '';
+  var headSub = '', midHTML = '', statsHTML = '';
+
+  if(st2 === 'Live'){
+    var inn = '';
+    if(g2.linescore && g2.linescore.currentInning){
+      inn = (g2.linescore.inningState || '') + ' ' + g2.linescore.currentInning;
+    }
+    headSub = 'LIVE' + (inn ? ' &middot; ' + esc(inn) : '');
+    midHTML = matchupHTML(themName, them.team.id, them.score, CONFIG.teamShort, us.score, rec, isHome);
+    statsHTML = '<div class="stats"><div class="stat"><div class="k">Venue</div>'
+      + '<div class="v" style="font-size:14px">' + venueName + '</div></div></div>';
+  } else if(st2 === 'Final'){
+    var won = (us.score != null && them.score != null && us.score > them.score);
+    headSub = 'FINAL &middot; ' + (won ? 'W' : 'L');
+    if(!sameLocalDay(gameTime, now)) headSub = dayName(gameTime).toUpperCase() + ' &middot; ' + headSub;
+    midHTML = matchupHTML(themName, them.team.id, them.score, CONFIG.teamShort, us.score, rec, isHome);
+    statsHTML = '<div class="stats"><div class="stat"><div class="k">Record</div>'
+      + '<div class="v">' + rec + '</div></div></div>';
+  } else {
+    var when;
+    if(sameLocalDay(gameTime, now)) when = 'Today';
+    else if(sameLocalDay(gameTime, new Date(now.getTime() + 86400000))) when = 'Tomorrow';
+    else when = dayName(gameTime);
+    headSub = 'NEXT GAME';
+    midHTML =
+        '<div class="hero" style="margin-bottom:8px">'
+      +   logoImg(them.team.id, 'nglg')
+      +   '<div class="val" style="font-size:46px;line-height:.9">' + when.toUpperCase() + '</div>'
+      +   '<div class="meta">'
+      +     '<div class="cat">' + (isHome ? 'vs' : '@') + ' ' + themName + '</div>'
+      +     '<div class="sub">' + fmtTime(gameTime) + (venueName ? ' &middot; ' + venueName : '') + '</div>'
+      +   '</div>'
+      + '</div>';
+    statsHTML =
+        '<div class="stats">'
+      +   '<div class="stat"><div class="k">Record</div><div class="v">' + rec + '</div></div>'
+      +   '<div class="stat"><div class="k">' + (isHome ? 'Home' : 'Away') + '</div>'
+      +     '<div class="v" style="font-size:14px">' + (venueName || '&mdash;') + '</div></div>'
+      + '</div>';
+  }
+
+  document.getElementById('card-brewers').innerHTML =
+      '<div class="head">'
+    +   '<div class="title">' + CONFIG.teamShort.toUpperCase() + '</div>'
+    +   '<div class="loc">' + headSub + '</div>'
+    + '</div>'
+    + midHTML + statsHTML;
+}
+
+/* MLB cap logo, dark-background variant (matches teal theme); hides itself if it fails to load */
+function logoImg(teamId, cls){
+  return '<img class="' + cls + '" alt="" '
+    + 'src="https://www.mlbstatic.com/team-logos/team-cap-on-dark/' + teamId + '.svg" '
+    + 'onerror="this.style.display=\'none\'">';
+}
+
+function shortName(full){
+  /* "Cincinnati Reds" -> "Reds"; keep 2-word nicknames like "Red Sox" / "Blue Jays" / "White Sox" */
+  var two = ['Red Sox','Blue Jays','White Sox'];
+  for(var i = 0; i < two.length; i++){
+    if(full.indexOf(two[i]) !== -1) return two[i];
+  }
+  var parts = full.split(' ');
+  return parts[parts.length - 1];
+}
+
+function matchupHTML(themName, themId, themScore, usName, usScore, rec, isHome){
+  var left  = isHome ? { id: themId, nm: themName, sc: themScore, rec: '' } : { id: CONFIG.teamId, nm: usName, sc: usScore, rec: rec };
+  var right = isHome ? { id: CONFIG.teamId, nm: usName, sc: usScore, rec: rec } : { id: themId, nm: themName, sc: themScore, rec: '' };
+  function side(s){
+    return '<div class="team">' + logoImg(s.id, 'lg')
+      + '<div class="nm">' + s.nm + '</div>'
+      + '<div class="sc">' + (s.sc != null ? s.sc : '&ndash;') + '</div>'
+      + (s.rec ? '<div class="rec">' + s.rec + '</div>' : '')
+      + '</div>';
+  }
+  return '<div class="match">' + side(left) + '<div class="vs">@</div>' + side(right) + '</div>';
+}
+
+/* ===========================================================
+   ROTATOR
+   =========================================================== */
+var CARDS = ['card-patio', 'card-brewers'];
+var current = 0;
+
+function buildDots(){
+  var html = '', i;
+  for(i = 0; i < CARDS.length; i++) html += '<i' + (i === 0 ? ' class="on"' : '') + '></i>';
+  document.getElementById('dots').innerHTML = html;
+}
+function rotate(){
+  current = (current + 1) % CARDS.length;
+  var i, dots = document.getElementById('dots').getElementsByTagName('i');
+  for(i = 0; i < CARDS.length; i++){
+    var el = document.getElementById(CARDS[i]);
+    if(i === current){ el.className = 'card on'; } else { el.className = 'card'; }
+    if(dots[i]) dots[i].className = (i === current) ? 'on' : '';
+  }
+}
+
+/* ---------- boot ---------- */
+function safePatio(){ try { loadPatio(); } catch(e){ cardErr('card-patio', 'patio forecast', e); } }
+function safeBrewers(){ try { loadBrewers(); } catch(e){ cardErr('card-brewers', 'Brewers schedule', e); } }
+
+buildDots();
+safePatio();
+safeBrewers();
+setInterval(rotate, CONFIG.rotateSeconds * 1000);
+setInterval(safePatio, CONFIG.weatherRefreshMin * 60 * 1000);
+setInterval(safeBrewers, CONFIG.mlbRefreshMin * 60 * 1000);
+</script>
+</body>
+</html>
