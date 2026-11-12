@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sports Rotator</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     SEASON-AWARE SPORTS ROTATOR — Brewers / Bucks / Packers / F1
+     Only leagues with something happening (live game, final in the
+     last ~36h, or a game/race in the next ~10 days) join the loop.
+     ES5 + XMLHttpRequest only (old Chromecast safe).
+     Edit CONFIG in the script block below.
+     ============================================================ */
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:100%; height:100%; }
+  body{
+    font-family:'Open Sans',sans-serif;
+    background:rgb(25,114,120);
+    color:rgb(192,230,222);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{ position:relative; width:100%; height:100%; }
+
+  .card{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:-webkit-flex; display:flex;
+    -webkit-flex-direction:column; flex-direction:column;
+    padding:14px 16px 26px;
+    opacity:0;
+    -webkit-transition:opacity .8s ease;
+    transition:opacity .8s ease;
+    pointer-events:none;
+  }
+  .card.on{ opacity:1; }
+
+  .head{ display:-webkit-flex; display:flex; -webkit-justify-content:space-between; justify-content:space-between; -webkit-align-items:baseline; align-items:baseline; margin-bottom:10px; }
+  .head .title{ font-family:'Bebas Neue',sans-serif; font-size:22px; letter-spacing:1.5px; line-height:1; }
+  .head .loc{ font-size:10px; letter-spacing:.5px; color:rgba(192,230,222,0.62); text-transform:uppercase; }
+
+  .hero{ display:-webkit-flex; display:flex; -webkit-align-items:flex-end; align-items:flex-end; margin-bottom:10px; }
+  .hero .val{ font-family:'Bebas Neue',sans-serif; font-size:46px; line-height:.9; letter-spacing:1px; }
+  .hero .meta{ padding-bottom:4px; padding-left:12px; min-width:0; }
+  .hero .cat{ font-family:'Bebas Neue',sans-serif; font-size:21px; letter-spacing:1px; line-height:1; }
+  .hero .sub{ font-size:10.5px; color:rgba(192,230,222,0.62); margin-top:3px; }
+
+  .stats{ display:-webkit-flex; display:flex; margin-top:auto; }
+  .stat{ -webkit-flex:1; flex:1; background:rgba(0,0,0,0.16); border-radius:7px; padding:7px 9px; min-width:0; }
+  .stat + .stat{ margin-left:8px; }
+  .stat .k{ font-size:9px; letter-spacing:.6px; text-transform:uppercase; color:rgba(192,230,222,0.62); white-space:nowrap; }
+  .stat .v{ font-family:'Bebas Neue',sans-serif; font-size:20px; line-height:1.05; letter-spacing:.5px; margin-top:2px; }
+  .stat .v small{ font-family:'Open Sans',sans-serif; font-size:10px; font-weight:600; letter-spacing:0; }
+
+  /* matchup row */
+  .match{ display:-webkit-flex; display:flex; -webkit-align-items:center; align-items:center; margin-bottom:10px; }
+  .team{ -webkit-flex:1; flex:1; text-align:center; min-width:0; }
+  .team .lg{ height:34px; display:block; margin:0 auto 5px; }
+  .nglg{ height:46px; margin-right:12px; }
+  .team .nm{ font-family:'Bebas Neue',sans-serif; font-size:26px; letter-spacing:1px; line-height:1.05; white-space:nowrap; overflow:hidden; }
+  .team .rec{ font-size:10px; color:rgba(192,230,222,0.62); margin-top:2px; }
+  .team .sc{ font-family:'Bebas Neue',sans-serif; font-size:52px; line-height:.9; }
+  .vs{ font-family:'Bebas Neue',sans-serif; font-size:15px; color:rgba(192,230,222,0.62); padding:0 10px; }
+
+  /* checkered-flag strip for F1 */
+  .checker{
+    height:8px; border-radius:4px; margin-bottom:10px;
+    background-color:rgba(0,0,0,0.25);
+    background-image:
+      linear-gradient(45deg, rgba(192,230,222,0.55) 25%, transparent 25%, transparent 75%, rgba(192,230,222,0.55) 75%),
+      linear-gradient(45deg, rgba(192,230,222,0.55) 25%, transparent 25%, transparent 75%, rgba(192,230,222,0.55) 75%);
+    background-size:8px 8px;
+    background-position:0 0, 4px 4px;
+  }
+
+  /* F1 upcoming-race row: info left, track outline right */
+  .f1row{ display:-webkit-flex; display:flex; -webkit-align-items:center; align-items:center; margin-bottom:10px; min-height:0; }
+  .f1info{ -webkit-flex:1; flex:1; min-width:0; }
+  .f1info .hero, .f1info .checker{ margin-bottom:0; }
+  .f1info .checker{ margin-top:10px; }
+  .f1track{ width:40%; padding-left:12px; text-align:center; }
+  .f1track img{
+    max-width:100%; max-height:120px;
+    -webkit-filter:invert(1); filter:invert(1);
+    opacity:.85;
+  }
+
+  /* dots */
+  #dots{ position:absolute; bottom:9px; left:0; width:100%; text-align:center; }
+  #dots i{ display:inline-block; width:6px; height:6px; border-radius:50%;
+           background:rgba(192,230,222,0.30); margin:0 3px;
+           -webkit-transition:background .4s; transition:background .4s; }
+  #dots i.on{ background:rgb(192,230,222); }
+
+  .err{ margin:auto; text-align:center; font-size:12px; color:rgba(192,230,222,0.62); padding:16px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="card" id="card-mlb"></div>
+  <div class="card" id="card-nba"></div>
+  <div class="card" id="card-nfl"></div>
+  <div class="card" id="card-f1"></div>
+  <div class="card on" id="card-msg"><div class="err">Loading&hellip;</div></div>
+  <div id="dots"></div>
+</div>
+
+<script>
+/* ===========================================================
+   CONFIG
+   =========================================================== */
+var CONFIG = {
+  rotateSeconds: 30,        // seconds per card
+  refreshMinutes: 15,       // re-fetch every feed this often
+  lookaheadDays: 10,        // upcoming game/race window
+  finalGraceHours: 36,      // keep finals on screen this long
+  mlb: { teamId: 158, name: 'Brewers' },              // MLB statsapi id
+  nba: { abbr: 'mil', name: 'Bucks' },                // ESPN team abbrev
+  nfl: { abbr: 'gb',  name: 'Packers' }               // ESPN team abbrev
+};
+
+/* ===========================================================
+   ES5 HELPERS
+   =========================================================== */
+function pad2(n){ n = String(n); return n.length < 2 ? '0' + n : n; }
+
+function fmtTime(d){
+  var h = d.getHours(), m = d.getMinutes();
+  var ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if(h === 0) h = 12;
+  return h + ':' + pad2(m) + ap;
+}
+/* "2026-07-05T14:00:00Z" or "2026-09-13T20:25Z" -> Date via Date.UTC */
+function parseUTC(s){
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?/);
+  if(m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0));
+  return new Date(s);
+}
+function sameLocalDay(a, b){
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function dayName(d){
+  return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+}
+function monShort(d){
+  return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+}
+function isoDate(d){
+  return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate());
+}
+/* Today / Tomorrow / weekday for an upcoming date */
+function whenWord(d, now){
+  if(sameLocalDay(d, now)) return 'Today';
+  if(sameLocalDay(d, new Date(now.getTime() + 86400000))) return 'Tomorrow';
+  return dayName(d);
+}
+function esc(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function indexOfStr(arr, v){
+  for(var i = 0; i < arr.length; i++){ if(arr[i] === v) return i; }
+  return -1;
+}
+
+function getJSON(url, ok, fail){
+  var xhr = new XMLHttpRequest();
+  var done = false;
+  function failOnce(e){ if(!done){ done = true; fail(e); } }
+  var watchdog = setTimeout(function(){
+    try { xhr.abort(); } catch(ig){}
+    failOnce(new Error('request timed out'));
+  }, 15000);
+  try {
+    xhr.open('GET', url, true);
+    xhr.onreadystatechange = function(){
+      if(xhr.readyState === 4 && !done){
+        clearTimeout(watchdog);
+        if(xhr.status >= 200 && xhr.status < 300){
+          done = true;
+          try { ok(JSON.parse(xhr.responseText)); }
+          catch(e){ fail(new Error('bad JSON: ' + (e.message || e))); }
+        } else if(xhr.status !== 0){
+          failOnce(new Error('HTTP ' + xhr.status));
+        }
+      }
+    };
+    xhr.onerror = function(){ clearTimeout(watchdog); failOnce(new Error('network error')); };
+    xhr.send();
+  } catch(e){ clearTimeout(watchdog); failOnce(new Error('request blocked: ' + (e.message || e))); }
+}
+
+/* ===========================================================
+   LEAGUE REGISTRY + ROTATOR
+   A league card only rotates when done && relevant.
+   Failed / off-season leagues silently drop out.
+   =========================================================== */
+var LEAGUES = [
+  { key:'mlb', card:'card-mlb', done:false, relevant:false, failed:false },
+  { key:'nba', card:'card-nba', done:false, relevant:false, failed:false },
+  { key:'nfl', card:'card-nfl', done:false, relevant:false, failed:false },
+  { key:'f1',  card:'card-f1',  done:false, relevant:false, failed:false }
+];
+var ALL_CARDS = ['card-mlb','card-nba','card-nfl','card-f1','card-msg'];
+var ACTIVE = ['card-msg'];
+var current = 0;
+
+function setLeague(key, relevant, failed){
+  for(var i = 0; i < LEAGUES.length; i++){
+    if(LEAGUES[i].key === key){
+      LEAGUES[i].done = true;
+      LEAGUES[i].relevant = !!relevant;
+      LEAGUES[i].failed = !!failed;
+      break;
+    }
+  }
+  if(failed && window.console && console.error) console.error('league failed: ' + key);
+  rebuildActive();
+}
+
+function rebuildActive(){
+  var list = [], i, allDone = true, allFailed = true;
+  for(i = 0; i < LEAGUES.length; i++){
+    var L = LEAGUES[i];
+    if(!L.done) allDone = false;
+    if(!L.failed) allFailed = false;
+    if(L.done && L.relevant) list.push(L.card);
+  }
+  if(!list.length){
+    var msg;
+    if(!allDone) msg = 'Loading&hellip;';
+    else if(allFailed) msg = 'Couldn\'t reach the sports feeds.<br>Will retry shortly.';
+    else msg = 'No games on the radar this week.';
+    document.getElementById('card-msg').innerHTML = '<div class="err">' + msg + '</div>';
+    list = ['card-msg'];
+  }
+  var shown = ACTIVE[current];
+  ACTIVE = list;
+  current = indexOfStr(ACTIVE, shown);
+  if(current < 0) current = 0;
+  buildDots();
+  showCurrent();
+}
+
+function buildDots(){
+  var html = '', i;
+  if(ACTIVE.length > 1){
+    for(i = 0; i < ACTIVE.length; i++) html += '<i' + (i === current ? ' class="on"' : '') + '></i>';
+  }
+  document.getElementById('dots').innerHTML = html;
+}
+function showCurrent(){
+  var i, id = ACTIVE[current];
+  for(i = 0; i < ALL_CARDS.length; i++){
+    document.getElementById(ALL_CARDS[i]).className = (ALL_CARDS[i] === id) ? 'card on' : 'card';
+  }
+  var dots = document.getElementById('dots').getElementsByTagName('i');
+  for(i = 0; i < dots.length; i++) dots[i].className = (i === current) ? 'on' : '';
+}
+function rotate(){
+  if(ACTIVE.length > 1) current = (current + 1) % ACTIVE.length;
+  showCurrent();
+}
+
+/* ===========================================================
+   SHARED CARD BUILDERS
+   =========================================================== */
+function imgTag(src, cls){
+  if(!src) return '';
+  return '<img class="' + cls + '" alt="" src="' + esc(src) + '" onerror="this.style.display=\'none\'">';
+}
+/* away on the left, home on the right, "@" in the middle */
+function matchupHTML(away, home){
+  function side(s){
+    return '<div class="team">' + imgTag(s.logo, 'lg')
+      + '<div class="nm">' + esc(s.nm) + '</div>'
+      + '<div class="sc">' + (s.sc != null && s.sc !== '' ? esc(s.sc) : '&ndash;') + '</div>'
+      + (s.rec ? '<div class="rec">' + esc(s.rec) + '</div>' : '')
+      + '</div>';
+  }
+  return '<div class="match">' + side(away) + '<div class="vs">@</div>' + side(home) + '</div>';
+}
+function upcomingHTML(logo, when, oppLine, subLine){
+  return '<div class="hero" style="margin-bottom:8px">'
+    + imgTag(logo, 'nglg')
+    + '<div class="val">' + esc(when).toUpperCase() + '</div>'
+    + '<div class="meta">'
+    +   '<div class="cat">' + oppLine + '</div>'
+    +   '<div class="sub">' + subLine + '</div>'
+    + '</div></div>';
+}
+function statTile(k, v, smallV){
+  return '<div class="stat"><div class="k">' + k + '</div>'
+    + '<div class="v"' + (smallV ? ' style="font-size:14px"' : '') + '>' + v + '</div></div>';
+}
+function headHTML(title, sub){
+  return '<div class="head"><div class="title">' + title + '</div>'
+    + '<div class="loc">' + sub + '</div></div>';
+}
+
+/* ===========================================================
+   GAME PICKING — Live > recent Final (<=36h) > next (<=10d)
+   Returns null when nothing is relevant (off-season).
+   =========================================================== */
+function pickGame(games, now){
+  var live = null, next = null, lastFinal = null, i;
+  var graceMs = CONFIG.finalGraceHours * 3600000;
+  var aheadMs = CONFIG.lookaheadDays * 86400000;
+  for(i = 0; i < games.length; i++){
+    var g = games[i];
+    if(!g || !g.date) continue;
+    var t = g.date.getTime();
+    if(g.state === 'in'){
+      if(!live) live = g;
+    } else if(g.state === 'pre'){
+      /* 4h grace keeps rain-delayed games visible as "upcoming" */
+      if(!next && t > now.getTime() - 4*3600000 && t < now.getTime() + aheadMs) next = g;
+    } else if(g.state === 'post'){
+      if(t <= now.getTime() && now.getTime() - t <= graceMs && (!lastFinal || t > lastFinal.date.getTime())) lastFinal = g;
+    }
+  }
+  return live || lastFinal || next;
+}
+
+/* ===========================================================
+   MLB — BREWERS (statsapi.mlb.com, keyless)
+   =========================================================== */
+function loadMLB(){
+  var now = new Date();
+  var start = new Date(now.getTime() - 2*86400000);
+  var end = new Date(now.getTime() + CONFIG.lookaheadDays * 86400000);
+  var url = 'https://statsapi.mlb.com/api/v1/schedule'
+    + '?sportId=1&teamId=' + CONFIG.mlb.teamId
+    + '&startDate=' + isoDate(start) + '&endDate=' + isoDate(end)
+    + '&hydrate=linescore';
+  getJSON(url, function(data){
+    try { renderMLB(data); } catch(e){ setLeague('mlb', false, true); }
+  }, function(e){ setLeague('mlb', false, true); });
+}
+
+function mlbLogo(teamId){
+  return 'https://www.mlbstatic.com/team-logos/team-cap-on-dark/' + teamId + '.svg';
+}
+function mlbShortName(full){
+  var two = ['Red Sox','Blue Jays','White Sox'], i;
+  for(i = 0; i < two.length; i++){ if(String(full).indexOf(two[i]) !== -1) return two[i]; }
+  var parts = String(full).split(' ');
+  return parts[parts.length - 1];
+}
+
+function renderMLB(data){
+  if(!data || !data.dates) throw new Error('malformed response');
+  var raw = [], i, j;
+  for(i = 0; i < data.dates.length; i++){
+    var dg = data.dates[i].games || [];
+    for(j = 0; j < dg.length; j++) raw.push(dg[j]);
+  }
+  var games = [], stMap = { 'Live':'in', 'Preview':'pre', 'Final':'post' };
+  for(i = 0; i < raw.length; i++){
+    var g = raw[i];
+    if(!g.teams || !g.teams.home || !g.teams.away || !g.teams.home.team || !g.teams.away.team) continue;
+    var st = g.status ? g.status.abstractGameState : '';
+    games.push({ date: parseUTC(g.gameDate), state: stMap[st] || 'pre', src: g });
+  }
+  var pick = pickGame(games, new Date());
+  if(!pick){ setLeague('mlb', false, false); return; }
+
+  var g2 = pick.src, now = new Date();
+  var home = g2.teams.home, away = g2.teams.away;
+  var isHome = home.team.id === CONFIG.mlb.teamId;
+  var us = isHome ? home : away, them = isHome ? away : home;
+  var rec = us.leagueRecord ? (us.leagueRecord.wins + '-' + us.leagueRecord.losses) : '';
+  var themName = mlbShortName(them.team.name || '');
+  var venueName = (g2.venue && g2.venue.name) ? g2.venue.name : '';
+  var headSub = '', midHTML = '', statsHTML = '';
+
+  var awaySide = { logo: mlbLogo(away.team.id), nm: isHome ? themName : CONFIG.mlb.name, sc: away.score, rec: isHome ? '' : rec };
+  var homeSide = { logo: mlbLogo(home.team.id), nm: isHome ? CONFIG.mlb.name : themName, sc: home.score, rec: isHome ? rec : '' };
+
+  if(pick.state === 'in'){
+    var inn = '';
+    if(g2.linescore && g2.linescore.currentInning){
+      inn = (g2.linescore.inningState || '') + ' ' + g2.linescore.currentInning;
+    }
+    headSub = 'LIVE' + (inn ? ' &middot; ' + esc(inn) : '');
+    midHTML = matchupHTML(awaySide, homeSide);
+    statsHTML = '<div class="stats">' + statTile('Venue', esc(venueName) || '&mdash;', true) + '</div>';
+  } else if(pick.state === 'post'){
+    var won = (us.score != null && them.score != null && us.score > them.score);
+    headSub = 'FINAL &middot; ' + (won ? 'W' : 'L');
+    if(!sameLocalDay(pick.date, now)) headSub = dayName(pick.date).toUpperCase() + ' &middot; ' + headSub;
+    midHTML = matchupHTML(awaySide, homeSide);
+    statsHTML = '<div class="stats">' + statTile('Record', esc(rec) || '&mdash;') + '</div>';
+  } else {
+    headSub = 'NEXT GAME';
+    midHTML = upcomingHTML(mlbLogo(them.team.id), whenWord(pick.date, now),
+      (isHome ? 'vs' : '@') + ' ' + esc(themName),
+      fmtTime(pick.date) + ' &middot; ' + monShort(pick.date) + ' ' + pick.date.getDate()
+      + (venueName ? ' &middot; ' + esc(venueName) : ''));
+    statsHTML = '<div class="stats">'
+      + statTile('Record', esc(rec) || '&mdash;')
+      + statTile(isHome ? 'Home' : 'Away', esc(venueName) || '&mdash;', true)
+      + '</div>';
+  }
+
+  document.getElementById('card-mlb').innerHTML =
+    headHTML(CONFIG.mlb.name.toUpperCase(), headSub) + midHTML + statsHTML;
+  setLeague('mlb', true, false);
+}
+
+/* ===========================================================
+   NBA + NFL — BUCKS / PACKERS (ESPN site API, keyless)
+   Off-season: events[] is empty -> card drops out.
+   =========================================================== */
+function loadESPN(key, sport, league, abbr, name){
+  var url = 'https://site.api.espn.com/apis/site/v2/sports/'
+    + sport + '/' + league + '/teams/' + abbr + '/schedule';
+  getJSON(url, function(data){
+    try { renderESPN(key, name, data); } catch(e){ setLeague(key, false, true); }
+  }, function(e){ setLeague(key, false, true); });
+}
+
+function espnLogoOf(team){
+  if(!team) return '';
+  var ls = team.logos, i, j;
+  if(ls && ls.length){
+    for(i = 0; i < ls.length; i++){
+      var rel = ls[i].rel || [];
+      for(j = 0; j < rel.length; j++){
+        if(rel[j] === 'dark') return ls[i].href;   /* dark variant pops on teal */
+      }
+    }
+    return ls[0].href;
+  }
+  return team.logo || '';
+}
+function espnScoreOf(c){
+  if(!c || c.score == null) return null;
+  if(typeof c.score === 'object'){
+    return c.score.displayValue != null ? c.score.displayValue : c.score.value;
+  }
+  return c.score;
+}
+function espnTeamName(team){
+  if(!team) return '';
+  return team.shortDisplayName || team.nickname || team.displayName || team.abbreviation || '';
+}
+
+function renderESPN(key, name, data){
+  if(!data) throw new Error('malformed response');
+  var evs = data.events || [];
+  var ourId = data.team ? String(data.team.id) : '';
+  var rec = (data.team && data.team.recordSummary) ? data.team.recordSummary : '';
+  var games = [], i, j;
+
+  for(i = 0; i < evs.length; i++){
+    var ev = evs[i];
+    var comp = (ev.competitions && ev.competitions.length) ? ev.competitions[0] : null;
+    if(!comp || !comp.competitors || comp.competitors.length < 2) continue;
+    var status = comp.status || ev.status;
+    var state = (status && status.type) ? status.type.state : '';
+    if(state !== 'pre' && state !== 'in' && state !== 'post') continue;
+    var us = null, them = null;
+    for(j = 0; j < comp.competitors.length; j++){
+      var c = comp.competitors[j];
+      if(!c || !c.team) continue;
+      if(String(c.team.id) === ourId) us = c; else them = c;
+    }
+    if(!us || !them) continue;
+    games.push({
+      date: parseUTC(comp.date || ev.date),
+      state: state,
+      us: us, them: them,
+      statusType: status.type,
+      venue: (comp.venue && comp.venue.fullName) ? comp.venue.fullName : ''
+    });
+  }
+
+  var now = new Date();
+  var pick = pickGame(games, now);
+  if(!pick){ setLeague(key, false, false); return; }
+
+  var isHome = pick.us.homeAway === 'home';
+  var usScore = espnScoreOf(pick.us), themScore = espnScoreOf(pick.them);
+  var themName = espnTeamName(pick.them.team);
+  var headSub = '', midHTML = '', statsHTML = '';
+
+  var awaySide = isHome
+    ? { logo: espnLogoOf(pick.them.team), nm: themName, sc: themScore, rec: '' }
+    : { logo: espnLogoOf(pick.us.team), nm: name, sc: usScore, rec: rec };
+  var homeSide = isHome
+    ? { logo: espnLogoOf(pick.us.team), nm: name, sc: usScore, rec: rec }
+    : { logo: espnLogoOf(pick.them.team), nm: themName, sc: themScore, rec: '' };
+
+  if(pick.state === 'in'){
+    var det = pick.statusType.shortDetail || pick.statusType.detail || '';
+    headSub = 'LIVE' + (det ? ' &middot; ' + esc(det) : '');
+    midHTML = matchupHTML(awaySide, homeSide);
+    statsHTML = '<div class="stats">' + statTile('Venue', esc(pick.venue) || '&mdash;', true) + '</div>';
+  } else if(pick.state === 'post'){
+    var won, res;
+    if(pick.us.winner === true) won = true;
+    else if(pick.them.winner === true) won = false;
+    else won = (usScore != null && themScore != null && Number(usScore) > Number(themScore));
+    res = won ? 'W' : 'L';
+    if(pick.us.winner !== true && pick.them.winner !== true
+       && usScore != null && themScore != null && Number(usScore) === Number(themScore)) res = 'T';
+    headSub = 'FINAL &middot; ' + res;
+    if(!sameLocalDay(pick.date, now)) headSub = dayName(pick.date).toUpperCase() + ' &middot; ' + headSub;
+    midHTML = matchupHTML(awaySide, homeSide);
+    statsHTML = '<div class="stats">' + statTile('Record', esc(rec) || '&mdash;') + '</div>';
+  } else {
+    headSub = 'NEXT GAME';
+    midHTML = upcomingHTML(espnLogoOf(pick.them.team), whenWord(pick.date, now),
+      (isHome ? 'vs' : '@') + ' ' + esc(themName),
+      fmtTime(pick.date) + ' &middot; ' + monShort(pick.date) + ' ' + pick.date.getDate()
+      + (pick.venue ? ' &middot; ' + esc(pick.venue) : ''));
+    statsHTML = '<div class="stats">'
+      + statTile('Record', esc(rec) || '&mdash;')
+      + statTile(isHome ? 'Home' : 'Away', esc(pick.venue) || '&mdash;', true)
+      + '</div>';
+  }
+
+  document.getElementById('card-' + key).innerHTML =
+    headHTML(name.toUpperCase(), headSub) + midHTML + statsHTML;
+  setLeague(key, true, false);
+}
+
+/* ===========================================================
+   F1 (jolpica ergast mirror, keyless)
+   next race + last race winner; card only when a race is near.
+   =========================================================== */
+var f1state = { pending: 0, next: null, last: null, anyOk: false };
+
+function loadF1(){
+  f1state = { pending: 2, next: null, last: null, anyOk: false };
+  getJSON('https://api.jolpi.ca/ergast/f1/current/next.json', function(d){
+    f1state.next = f1Race(d); f1state.anyOk = true; f1Done();
+  }, function(e){ f1Done(); });
+  getJSON('https://api.jolpi.ca/ergast/f1/current/last/results.json?limit=1', function(d){
+    f1state.last = f1Race(d); f1state.anyOk = true; f1Done();
+  }, function(e){ f1Done(); });
+}
+function f1Race(d){
+  try {
+    var races = d.MRData.RaceTable.Races;
+    return (races && races.length) ? races[0] : null;
+  } catch(e){ return null; }
+}
+function f1Start(race){
+  if(!race || !race.date) return null;
+  return parseUTC(race.date + 'T' + (race.time || '12:00:00Z'));
+}
+function f1SessionLine(label, s){
+  if(!s || !s.date) return '';
+  var d = parseUTC(s.date + 'T' + (s.time || '12:00:00Z'));
+  return statTile(label, dayName(d).slice(0,3).toUpperCase() + ' <small>' + fmtTime(d) + '</small>');
+}
+function f1Done(){
+  f1state.pending--;
+  if(f1state.pending > 0) return;
+  try { renderF1(); } catch(e){ setLeague('f1', false, true); }
+}
+
+/* jolpica circuitId -> Wikimedia Commons circuit-layout file.
+   Served via Special:FilePath which redirects to the rendered image.
+   Non-ASCII filenames are stored pre-percent-encoded.
+   Unknown circuitId -> no image (card stays info-only). */
+var F1_TRACKS = {
+  albert_park:   'Albert_Park_Circuit_2021.svg',
+  shanghai:      'Shanghai_International_Racing_Circuit_track_map.svg',
+  suzuka:        'Suzuka_circuit_map--2005.svg',
+  bahrain:       'Bahrain_International_Circuit--Grand_Prix_Layout.svg',
+  jeddah:        'Jeddah_Street_Circuit_2021.svg',
+  miami:         '2022_F1_CourseLayout_Miami.svg',
+  catalunya:     '2023_F1_CourseLayout_Spain.svg',
+  madring:       'Madring_(2026).svg',
+  monaco:        'Circuit_Monaco.svg',
+  villeneuve:    'Circuit_Gilles_Villeneuve.svg',
+  red_bull_ring: 'Circuit_Red_Bull_Ring.svg',
+  silverstone:   'Silverstone_Circuit_2020.png',
+  spa:           'Spa-Francorchamps_of_Belgium.svg',
+  hungaroring:   'Hungaroring.svg',
+  zandvoort:     'Zandvoort.svg',
+  monza:         'Monza_track_map.svg',
+  baku:          'Baku_Formula_One_circuit_map.svg',
+  marina_bay:    'Marina_Bay_circuit_2023.svg',
+  americas:      'Austin_circuit.svg',
+  rodriguez:     'Aut%C3%B3dromo_Hermanos_Rodr%C3%ADguez.svg',
+  interlagos:    'Aut%C3%B3dromo_Jos%C3%A9_Carlos_Pace_(AKA_Interlagos)_track_map.svg',
+  vegas:         '2023_Las_Vegas_street_circuit.svg',
+  losail:        'Lusail_International_Circuit_2023.svg',
+  yas_marina:    'Yas_Marina_Circuit_2021_new_Formula_One_layout_proposal_08_07_2021.svg'
+};
+function f1TrackURL(race){
+  var cid = (race && race.Circuit) ? race.Circuit.circuitId : '';
+  if(!cid || !Object.prototype.hasOwnProperty.call(F1_TRACKS, cid)) return '';
+  return 'https://commons.wikimedia.org/wiki/Special:FilePath/' + F1_TRACKS[cid] + '?width=400';
+}
+function f1TrackHTML(race){
+  var u = f1TrackURL(race);
+  if(!u) return '';
+  /* onerror collapses the whole track column -> info-only card */
+  return '<div class="f1track"><img alt="" src="' + esc(u)
+    + '" onerror="this.parentNode.style.display=\'none\'"></div>';
+}
+
+function renderF1(){
+  var now = new Date();
+  var next = f1state.next, last = f1state.last;
+  var nextStart = f1Start(next), lastStart = f1Start(last);
+  var graceMs = CONFIG.finalGraceHours * 3600000;
+  var aheadMs = CONFIG.lookaheadDays * 86400000;
+  var el = document.getElementById('card-f1');
+
+  var winner = null;
+  if(last && last.Results && last.Results.length && last.Results[0].Driver){
+    winner = {
+      name: last.Results[0].Driver.familyName || last.Results[0].Driver.code || '',
+      team: last.Results[0].Constructor ? last.Results[0].Constructor.name : ''
+    };
+  }
+
+  /* race likely underway right now (jolpica has no live timing) */
+  if(nextStart && now.getTime() >= nextStart.getTime() && now.getTime() < nextStart.getTime() + 5*3600000){
+    el.innerHTML = headHTML('F1', 'RACE UNDERWAY')
+      + '<div class="hero"><div class="val">LIGHTS OUT</div>'
+      + '<div class="meta"><div class="cat">' + esc(next.raceName || '') + '</div>'
+      + '<div class="sub">' + esc(f1Circuit(next)) + '</div></div></div>'
+      + '<div class="checker"></div>'
+      + '<div class="stats">' + statTile('Started', fmtTime(nextStart)) + '</div>';
+    setLeague('f1', true, false);
+    return;
+  }
+
+  /* recent final (last ~36h) */
+  if(lastStart && now.getTime() - lastStart.getTime() >= 0 && now.getTime() - lastStart.getTime() <= graceMs){
+    el.innerHTML = headHTML('F1', 'FINAL &middot; ' + dayName(lastStart).toUpperCase())
+      + '<div class="hero"><div class="val">P1 ' + esc(winner ? winner.name : '').toUpperCase() + '</div>'
+      + '<div class="meta"><div class="cat">' + esc(winner ? winner.team : '') + '</div>'
+      + '<div class="sub">' + esc(last.raceName || '') + ' &middot; ' + esc(f1Circuit(last)) + '</div></div></div>'
+      + '<div class="checker"></div>'
+      + '<div class="stats">'
+      + statTile('Race', esc(last.raceName || '').replace(' Grand Prix',' GP'), true)
+      + (next ? statTile('Next', esc((next.raceName || '').replace(' Grand Prix',' GP')) + (nextStart ? ' <small>' + monShort(nextStart) + ' ' + nextStart.getDate() + '</small>' : ''), true) : '')
+      + '</div>';
+    setLeague('f1', true, false);
+    return;
+  }
+
+  /* upcoming race within the window */
+  if(nextStart && nextStart.getTime() - now.getTime() > 0 && nextStart.getTime() - now.getTime() <= aheadMs){
+    var infoHTML = '<div class="hero"><div class="val">' + whenWord(nextStart, now).toUpperCase() + '</div>'
+      + '<div class="meta"><div class="cat">' + esc(next.raceName || '') + '</div>'
+      + '<div class="sub">' + esc(f1Circuit(next)) + '</div></div></div>'
+      + '<div class="checker"></div>';
+    var trackHTML = f1TrackHTML(next);
+    el.innerHTML = headHTML('F1', 'NEXT RACE')
+      + (trackHTML
+          ? '<div class="f1row"><div class="f1info">' + infoHTML + '</div>' + trackHTML + '</div>'
+          : infoHTML)
+      + '<div class="stats">'
+      + statTile('Race', monShort(nextStart) + ' ' + nextStart.getDate() + ' <small>' + fmtTime(nextStart) + '</small>')
+      + f1SessionLine('Qualifying', next.Qualifying)
+      + (winner ? statTile('Last winner', esc(winner.name), true) : '')
+      + '</div>';
+    setLeague('f1', true, false);
+    return;
+  }
+
+  /* nothing near: fine if a feed answered, a failure only if both died */
+  setLeague('f1', false, !f1state.anyOk);
+}
+function f1Circuit(race){
+  if(!race || !race.Circuit) return '';
+  var c = race.Circuit;
+  var loc = c.Location ? (c.Location.country || '') : '';
+  return (c.circuitName || '') + (loc ? ' · ' + loc : '');
+}
+
+/* ===========================================================
+   BOOT
+   =========================================================== */
+function loadAll(){
+  try { loadMLB(); } catch(e){ setLeague('mlb', false, true); }
+  try { loadESPN('nba', 'basketball', 'nba', CONFIG.nba.abbr, CONFIG.nba.name); } catch(e){ setLeague('nba', false, true); }
+  try { loadESPN('nfl', 'football', 'nfl', CONFIG.nfl.abbr, CONFIG.nfl.name); } catch(e){ setLeague('nfl', false, true); }
+  try { loadF1(); } catch(e){ setLeague('f1', false, true); }
+}
+
+rebuildActive();
+loadAll();
+var rotateTimer = setInterval(rotate, CONFIG.rotateSeconds * 1000);
+setInterval(loadAll, CONFIG.refreshMinutes * 60 * 1000);
+
+/* click anywhere -> advance to the next card and restart the
+   rotation clock (cards are pointer-events:none, so clicks land
+   on document). Handy for local QA; harmless on the dashboard. */
+document.addEventListener('click', function(){
+  clearInterval(rotateTimer);
+  rotate();
+  rotateTimer = setInterval(rotate, CONFIG.rotateSeconds * 1000);
+}, false);
+</script>
+</body>
+</html>
