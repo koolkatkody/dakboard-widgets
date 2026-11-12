@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winter Watch</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     WINTER WATCH — feels-like, snow, daylight
+     Seasonal stand-in for widget-uv-index.html (same slot, same look).
+     ES5 + XMLHttpRequest only (old Chromecast safe).
+     Edit CONFIG in the script block below.
+     ============================================================ */
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:100%; height:100%; }
+  body{
+    font-family:'Open Sans',sans-serif;
+    background:rgb(25,114,120);
+    color:rgb(192,230,222);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #card{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:-webkit-flex; display:flex;
+    -webkit-flex-direction:column; flex-direction:column;
+    padding:14px 16px 14px;
+  }
+
+  .head{ display:-webkit-flex; display:flex; -webkit-justify-content:space-between; justify-content:space-between; -webkit-align-items:baseline; align-items:baseline; margin-bottom:10px; }
+  .head .title{ font-family:'Bebas Neue',sans-serif; font-size:22px; letter-spacing:1.5px; line-height:1; }
+  .head .loc{ font-size:10px; letter-spacing:.5px; color:rgba(192,230,222,0.62); text-transform:uppercase; }
+
+  .hero{ display:-webkit-flex; display:flex; -webkit-align-items:flex-end; align-items:flex-end; margin-bottom:10px; }
+  .hero .val{ font-family:'Bebas Neue',sans-serif; font-size:64px; line-height:.8; letter-spacing:1px; }
+  .hero .meta{ padding-bottom:5px; padding-left:12px; min-width:0; }
+  .hero .cat{ font-family:'Bebas Neue',sans-serif; font-size:21px; letter-spacing:1px; line-height:1; }
+  .hero .sub{ font-size:10.5px; color:rgba(192,230,222,0.62); margin-top:3px; }
+
+  .spark-k{ font-size:9px; letter-spacing:.6px; text-transform:uppercase; color:rgba(192,230,222,0.62); margin-bottom:2px; }
+  .chart-wrap{ -webkit-flex:1; flex:1; min-height:0; position:relative; margin-bottom:10px; }
+  .chart-wrap svg{ width:100%; height:100%; display:block; }
+  .axis-lbl{ font-size:9px; fill:rgba(192,230,222,0.62); font-family:'Open Sans',sans-serif; }
+  .pt-lbl{ font-size:10px; font-weight:700; fill:rgb(192,230,222); font-family:'Open Sans',sans-serif; }
+
+  .stats{ display:-webkit-flex; display:flex; margin-top:auto; }
+  .stat{ -webkit-flex:1; flex:1; background:rgba(0,0,0,0.16); border-radius:7px; padding:7px 9px; min-width:0; }
+  .stat + .stat{ margin-left:8px; }
+  .stat .k{ font-size:9px; letter-spacing:.6px; text-transform:uppercase; color:rgba(192,230,222,0.62); white-space:nowrap; }
+  .stat .v{ font-family:'Bebas Neue',sans-serif; font-size:20px; line-height:1.05; letter-spacing:.5px; margin-top:2px; white-space:nowrap; }
+  .stat .v small{ font-family:'Open Sans',sans-serif; font-size:10px; font-weight:600; letter-spacing:0; }
+  .stat .x{ font-size:9.5px; color:rgba(192,230,222,0.62); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .err{ margin:auto; text-align:center; font-size:12px; color:rgba(192,230,222,0.62); padding:16px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="card"><div class="err">Loading&hellip;</div></div>
+
+<script>
+/* ===========================================================
+   CONFIG
+   =========================================================== */
+var CONFIG = {
+  lat: 42.99,                 // Bay View / Milwaukee
+  lon: -87.90,
+  tz: 'America/Chicago',
+  label: 'Bay View',
+  refreshMinutes: 15
+};
+
+/* ---------- ES5 helpers ---------- */
+function pad2(n){ n = String(n); return n.length < 2 ? '0' + n : n; }
+
+function fmtTime(d){
+  var h = d.getHours(), m = d.getMinutes();
+  var ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if(h === 0) h = 12;
+  return h + ':' + pad2(m) + ap;
+}
+function fmtHour(d){
+  var h = d.getHours();
+  var ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if(h === 0) h = 12;
+  return h + ap;
+}
+function fmtHourShort(d){
+  var h = d.getHours();
+  var ap = h >= 12 ? 'p' : 'a';
+  h = h % 12; if(h === 0) h = 12;
+  return h + ap;
+}
+function dayAbbr(d){
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+}
+
+/* Manual ISO parse — old engines return Invalid Date on new Date("2026-11-11T18:00"). */
+function parseLocal(s){
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if(m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
+  return null;
+}
+
+function esc(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function inches(v){
+  if(v < 0.05) return '0';
+  if(v >= 10) return String(Math.round(v));
+  return v.toFixed(1);
+}
+
+function feelsCat(t){
+  if(t <= -20) return 'Dangerous cold';
+  if(t <= 0)   return 'Bitter cold';
+  if(t <= 15)  return 'Very cold';
+  if(t <= 32)  return 'Freezing';
+  if(t <= 45)  return 'Chilly';
+  if(t <= 60)  return 'Cool';
+  return 'Mild';
+}
+
+/* XHR JSON loader with 15s watchdog (replaces fetch) */
+function getJSON(url, ok, fail){
+  var xhr = new XMLHttpRequest();
+  var done = false;
+  function failOnce(e){ if(!done){ done = true; fail(e); } }
+  var watchdog = setTimeout(function(){
+    try { xhr.abort(); } catch(ig){}
+    failOnce(new Error('request timed out'));
+  }, 15000);
+  try {
+    xhr.open('GET', url, true);
+    xhr.onreadystatechange = function(){
+      if(xhr.readyState === 4 && !done){
+        clearTimeout(watchdog);
+        if(xhr.status >= 200 && xhr.status < 300){
+          done = true;
+          var parsed;
+          try { parsed = JSON.parse(xhr.responseText); }
+          catch(e){ fail(new Error('bad JSON: ' + (e.message || e))); return; }
+          ok(parsed);
+        } else if(xhr.status !== 0){
+          failOnce(new Error('HTTP ' + xhr.status));
+        } else {
+          failOnce(new Error('network/TLS error'));
+        }
+      }
+    };
+    xhr.onerror = function(){ clearTimeout(watchdog); failOnce(new Error('network/TLS error')); };
+    xhr.send();
+  } catch(e){ clearTimeout(watchdog); failOnce(new Error('request blocked: ' + (e.message || e))); }
+}
+
+var hasData = false;
+
+function showErr(e){
+  var msg = (e && e.message) ? e.message : String(e);
+  if(window.console && console.error) console.error('winter watch', e);
+  if(hasData) return;      /* keep the last good reading on screen */
+  document.getElementById('card').innerHTML =
+    '<div class="err">Couldn\'t load winter weather.'
+    + '<br><span style="font-size:10px;opacity:.7">' + esc(msg) + '</span></div>';
+}
+
+/* ===========================================================
+   CHART — feels-like for the next 24h, with hourly snow bars
+   =========================================================== */
+function chartSVG(pts){
+  var W = 520, H = 120, padL = 6, padR = 6, padT = 16, padB = 16;
+  var cw = W - padL - padR, ch = H - padT - padB;
+  var i, lo = Infinity, hi = -Infinity, loIdx = 0, maxSnow = 0;
+  for(i = 0; i < pts.length; i++){
+    if(pts[i].f < lo){ lo = pts[i].f; loIdx = i; }
+    if(pts[i].f > hi) hi = pts[i].f;
+    if(pts[i].s > maxSnow) maxSnow = pts[i].s;
+  }
+  var yMin = lo - 3, yMax = hi + 3;
+  if(yMax - yMin < 12){ yMin -= 3; yMax += 3; }
+  function X(k){ return padL + (k / (pts.length - 1)) * cw; }
+  function Y(f){ return padT + (1 - (f - yMin) / (yMax - yMin)) * ch; }
+
+  /* snow bars (scaled so 0.5 in/hr or the max hour fills ~60% of the height) */
+  var bars = '';
+  if(maxSnow > 0){
+    var scale = Math.max(0.5, maxSnow), bw = cw / (pts.length - 1) * 0.6, bh;
+    for(i = 0; i < pts.length; i++){
+      if(pts[i].s > 0){
+        bh = Math.max(2, (pts[i].s / scale) * ch * 0.6);
+        bars += '<rect x="' + (X(i) - bw/2).toFixed(1) + '" y="' + (padT + ch - bh).toFixed(1)
+              + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1)
+              + '" fill="#ffffff" opacity="0.55"/>';
+      }
+    }
+  }
+
+  var line = '';
+  for(i = 0; i < pts.length; i++){
+    line += (i === 0 ? 'M' : 'L') + X(i).toFixed(1) + ' ' + Y(pts[i].f).toFixed(1) + ' ';
+  }
+  var area = line + 'L ' + X(pts.length - 1).toFixed(1) + ' ' + (padT + ch)
+                  + ' L ' + X(0).toFixed(1) + ' ' + (padT + ch) + ' Z';
+
+  /* freezing reference line, only when 32 is inside the range */
+  var frz = '';
+  if(yMin < 32 && yMax > 32){
+    var fy = Y(32).toFixed(1);
+    frz = '<line x1="' + padL + '" y1="' + fy + '" x2="' + (W - padR) + '" y2="' + fy
+        + '" stroke="rgba(192,230,222,0.45)" stroke-width="1" stroke-dasharray="3 4"/>'
+        + '<text x="' + (W - padR) + '" y="' + (+fy - 3).toFixed(1) + '" text-anchor="end" class="axis-lbl">32&deg;</text>';
+  }
+
+  /* coldest point marker + label */
+  var lx = X(loIdx), ly = Y(lo);
+  var anchor = loIdx < 2 ? 'start' : (loIdx > pts.length - 3 ? 'end' : 'middle');
+  var lowMark = '<circle cx="' + lx.toFixed(1) + '" cy="' + ly.toFixed(1) + '" r="3.5" fill="rgb(192,230,222)"/>'
+    + '<text x="' + lx.toFixed(1) + '" y="' + (ly - 8).toFixed(1) + '" text-anchor="' + anchor + '" class="pt-lbl">'
+    + Math.round(lo) + '&deg;</text>';
+
+  /* now marker */
+  var nowMark = '<circle cx="' + X(0).toFixed(1) + '" cy="' + Y(pts[0].f).toFixed(1)
+    + '" r="5" fill="rgb(25,114,120)" stroke="#fff" stroke-width="2"/>';
+
+  var xt = '', ticks = [0, 6, 12, 18, 24], k, pi, a;
+  for(k = 0; k < ticks.length; k++){
+    pi = Math.min(ticks[k], pts.length - 1);
+    a = (k === 0) ? 'start' : (k === ticks.length - 1 ? 'end' : 'middle');
+    xt += '<text x="' + X(pi).toFixed(1) + '" y="' + (H - 3) + '" text-anchor="' + a + '" class="axis-lbl">'
+        + (k === 0 ? 'now' : fmtHourShort(pts[pi].d)) + '</text>';
+  }
+
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">'
+    + '<defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0%" stop-color="rgb(192,230,222)" stop-opacity="0.30"/>'
+    + '<stop offset="100%" stop-color="rgb(192,230,222)" stop-opacity="0.02"/>'
+    + '</linearGradient></defs>'
+    + '<path d="' + area + '" fill="url(#wg)"/>'
+    + bars + frz
+    + '<path d="' + line + '" fill="none" stroke="rgb(192,230,222)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'
+    + lowMark + nowMark + xt
+    + '</svg>';
+}
+
+/* ===========================================================
+   RENDER
+   =========================================================== */
+function render(data){
+  if(!data || !data.current || !data.hourly || !data.hourly.time || !data.daily) throw new Error('malformed response');
+  var cur = data.current, h = data.hourly, daily = data.daily, i;
+
+  /* "now" comes from the API (already in Milwaukee time), not the device clock */
+  var now = parseLocal(cur.time) || new Date();
+
+  /* hourly index of the current hour */
+  var key = String(cur.time || '').substr(0, 13), start = 0;
+  for(i = 0; i < h.time.length; i++){
+    if(String(h.time[i]).substr(0, 13) === key){ start = i; break; }
+  }
+
+  /* next 24h feels-like + snow, and 48h snow total */
+  var pts = [], s24 = 0, s48 = 0, firstSnow = -1, f, s;
+  for(i = start; i < h.time.length && i <= start + 48; i++){
+    f = (h.apparent_temperature && h.apparent_temperature[i] != null) ? h.apparent_temperature[i] : null;
+    s = (h.snowfall && h.snowfall[i] != null) ? h.snowfall[i] : 0;
+    if(i <= start + 24 && f != null) pts.push({ d: parseLocal(h.time[i]), f: f, s: (i < start + 24 ? s : 0) });
+    if(i < start + 24) s24 += s;
+    if(i < start + 48){ s48 += s; if(firstSnow < 0 && s > 0) firstSnow = i; }
+  }
+  if(pts.length < 2) throw new Error('no hourly data in response');
+
+  /* hero */
+  var feels = (cur.apparent_temperature != null) ? Math.round(cur.apparent_temperature) : Math.round(pts[0].f);
+  var sub = [];
+  if(cur.temperature_2m != null) sub.push('Actual ' + Math.round(cur.temperature_2m) + '&deg;');
+  if(cur.wind_speed_10m != null) sub.push('Wind ' + Math.round(cur.wind_speed_10m) + ' mph');
+  if(cur.wind_gusts_10m != null && cur.wind_speed_10m != null && cur.wind_gusts_10m >= cur.wind_speed_10m + 8){
+    sub.push('Gusts ' + Math.round(cur.wind_gusts_10m));
+  }
+
+  /* snow tile */
+  var snowX;
+  if(s48 < 0.05 || firstSnow < 0){
+    snowX = 'None in the next 48h';
+  } else if(firstSnow === start){
+    snowX = 'Snowing now &middot; 48h: ' + inches(s48) + ' in';
+  } else {
+    var fd = parseLocal(h.time[firstSnow]);
+    snowX = 'Starts ' + dayAbbr(fd) + ' ' + fmtHour(fd) + ' &middot; 48h: ' + inches(s48) + ' in';
+  }
+
+  /* coldest tile */
+  var lo = pts[0], k;
+  for(k = 1; k < pts.length; k++){ if(pts[k].f < lo.f) lo = pts[k]; }
+
+  /* daylight tile: sunset while it's light, tomorrow's sunrise after dark */
+  var rise0 = daily.sunrise ? parseLocal(daily.sunrise[0]) : null;
+  var set0  = daily.sunset  ? parseLocal(daily.sunset[0])  : null;
+  var rise1 = daily.sunrise ? parseLocal(daily.sunrise[1]) : null;
+  var set1  = daily.sunset  ? parseLocal(daily.sunset[1])  : null;
+  var sunK = 'Sunset', sunV = '&mdash;', sunX = '';
+  function lightMin(r, st){ return Math.round((st.getTime() - r.getTime()) / 60000); }
+  function lightStr(m){ return Math.floor(m / 60) + 'h ' + (m % 60) + 'm of light'; }
+  if(rise0 && set0){
+    var m0 = lightMin(rise0, set0);
+    if(now.getTime() < set0.getTime()){
+      sunV = fmtTime(set0);
+      sunX = lightStr(m0);
+      if(rise1 && set1){
+        var diff = lightMin(rise1, set1) - m0;
+        if(diff !== 0) sunX += ' &middot; ' + (diff > 0 ? '+' : '&minus;') + Math.abs(diff) + 'm';
+      }
+    } else if(rise1 && set1){
+      sunK = 'Sunrise';
+      sunV = fmtTime(rise1);
+      sunX = 'Tomorrow &middot; ' + lightStr(lightMin(rise1, set1));
+    } else {
+      sunV = fmtTime(set0);
+      sunX = lightStr(m0);
+    }
+  }
+
+  document.getElementById('card').innerHTML =
+      '<div class="head">'
+    +   '<div class="title">WINTER WATCH</div>'
+    +   '<div class="loc">' + esc(CONFIG.label) + ' &middot; ' + fmtTime(now) + '</div>'
+    + '</div>'
+    + '<div class="hero">'
+    +   '<div class="val">' + feels + '&deg;</div>'
+    +   '<div class="meta">'
+    +     '<div class="cat">' + esc(feelsCat(feels)) + '</div>'
+    +     '<div class="sub">Feels like &middot; ' + sub.join(' &middot; ') + '</div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="spark-k">Feels like &middot; next 24h' + (s24 >= 0.05 ? ' &middot; bars = snow' : '') + '</div>'
+    + '<div class="chart-wrap">' + chartSVG(pts) + '</div>'
+    + '<div class="stats">'
+    +   '<div class="stat"><div class="k">Snow &middot; next 24h</div>'
+    +     '<div class="v">' + inches(s24) + ' <small>in</small></div>'
+    +     '<div class="x">' + snowX + '</div></div>'
+    +   '<div class="stat"><div class="k">Coldest &middot; next 24h</div>'
+    +     '<div class="v">' + Math.round(lo.f) + '&deg; <small>feels</small></div>'
+    +     '<div class="x">' + dayAbbr(lo.d) + ' ' + fmtHour(lo.d) + '</div></div>'
+    +   '<div class="stat"><div class="k">' + sunK + '</div>'
+    +     '<div class="v">' + sunV + '</div>'
+    +     '<div class="x">' + sunX + '</div></div>'
+    + '</div>';
+  hasData = true;
+}
+
+/* ===========================================================
+   LOAD — one keyless Open-Meteo request
+   =========================================================== */
+function load(){
+  var url = 'https://api.open-meteo.com/v1/forecast'
+    + '?latitude=' + CONFIG.lat + '&longitude=' + CONFIG.lon
+    + '&current=temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m'
+    + '&hourly=apparent_temperature,snowfall'
+    + '&daily=sunrise,sunset'
+    + '&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'
+    + '&timezone=' + encodeURIComponent(CONFIG.tz) + '&forecast_days=3';
+  getJSON(url, function(data){
+    try {
+      if(data && data.error) throw new Error(data.reason || 'API error');
+      render(data);
+    } catch(e){ showErr(e); }
+  }, showErr);
+}
+
+function safeLoad(){ try { load(); } catch(e){ showErr(e); } }
+
+safeLoad();
+setInterval(safeLoad, CONFIG.refreshMinutes * 60 * 1000);
+</script>
+</body>
+</html>
